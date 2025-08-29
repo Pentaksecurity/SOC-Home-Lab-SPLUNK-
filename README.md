@@ -1,124 +1,96 @@
-# SOC Home Lab SPLUNK
+SOC Home Lab: Attack Simulation & Splunk Telemetry Analysis
+Objective
 
-# 1.Setting up the lab
+The purpose of this lab was to simulate a cyber intrusion in a controlled environment, generate telemetry data, and analyze the resulting indicators of compromise (IOCs) using Splunk. By replaying a simple attack scenario, we demonstrate how defenders can trace malicious activity, investigate attacker actions, and validate detection capabilities.
 
-First thing we did was created 2 VM in my VBox.
+1. Lab Environment
 
-I got a Kali Machine (192.168.20.11) and a Windows 11 (192.168.20.10)
+Two virtual machines were configured in VirtualBox on an Internal Network (no external access):
 
-The networking is setup only on the internal Network.
+Attacker: Kali Linux – 192.168.20.11
 
-<img width="709" height="207" alt="Screen Shot 2025-08-29 at 2 07 09 PM" src="https://github.com/user-attachments/assets/668b4917-04fa-4a43-9562-7c96813aee9d" />
+Victim: Windows 11 – 192.168.20.10
 
-So these 2 can only communicate with each other for the purpose of this lab.
+This setup ensured that communication occurred only between the two hosts, isolating the test environment from external networks.
 
-# 2. Setting up the exploit and monitoring
+<img width="709" height="207" alt="VM Networking" src="https://github.com/user-attachments/assets/668b4917-04fa-4a43-9562-7c96813aee9d" />
+2. Attack Simulation
+Reconnaissance
 
-For the purpose of this lab is to show the IOCs and the monitoring with Splunk and creating Telemetery.
+The attacker initiated a scan of the victim using Nmap, identifying open ports including 3389 (RDP) — a potential entry point for exploitation.
 
-We are going act as an attacker (Kali) and the defender/victim (Windows) in this scenario.
+<img width="1516" height="597" alt="Nmap Scan" src="https://github.com/user-attachments/assets/4e8329b4-bd40-4a29-8a08-ccd77c42f4ca" />
+Weaponization
 
-# Recon
+A malicious payload was generated with msfvenom, disguised as a seemingly legitimate file:
+Invoice.pdf.exe.
 
-First things first is to do some recon, we are going to use Nmap for this.
+<img width="1111" height="183" alt="Payload Creation" src="https://github.com/user-attachments/assets/15aae95a-76a6-44cb-b1e4-76f23076eb9d" />
+Delivery
 
-<img width="1516" height="597" alt="Screen Shot 2025-08-29 at 2 11 21 PM" src="https://github.com/user-attachments/assets/4e8329b4-bd40-4a29-8a08-ccd77c42f4ca" />
-
-We can see we got some ports open, what we were looking for is 3389 for RDP.
-
-# Weaponization
-
-We now will create a payload for this using msfvenom and pretend that this was a phishing email and call it "Invoice.pdf.exe"
-
-<img width="1111" height="183" alt="Screen Shot 2025-08-29 at 2 10 53 PM" src="https://github.com/user-attachments/assets/15aae95a-76a6-44cb-b1e4-76f23076eb9d" />
-
-# Delivery
-
-Now we have to deliver this Payload to the victim machine (Windows), we are just going to setup a python server.
+The payload was hosted on a simple Python HTTP server, simulating a phishing delivery method.
 
 python3 -m http.server 9999
-<img width="673" height="178" alt="Screen Shot 2025-08-29 at 2 12 03 PM" src="https://github.com/user-attachments/assets/a258fafa-ae2e-4a38-8550-86fe43a99b8f" />
 
-# Exploitation
+<img width="673" height="178" alt="Payload Delivery" src="https://github.com/user-attachments/assets/a258fafa-ae2e-4a38-8550-86fe43a99b8f" />
+Exploitation
 
-We are now going to setup a meterpreter listener we are going to use "multi/handler" for this one and set the payload the same as when we created in msfvenom:
+The attacker configured a Meterpreter reverse TCP listener. Once the victim executed the payload, a reverse shell session was established.
 
-windows/x64/meterpreter/reverse_tcp
+<img width="1080" height="848" alt="Meterpreter Shell" src="https://github.com/user-attachments/assets/bad57630-606b-4831-9572-b78c581eda2c" /> <img width="646" height="597" alt="Shell Commands" src="https://github.com/user-attachments/assets/60d7be8a-f038-41ae-a7ff-a49b5f246459" />
 
-Mind you this is super simple and any AV will detect it but for the purpose of this lab is to show telemtery and investigate with Splunk.
+To generate forensic artifacts, commands such as net user, ipconfig, and net localgroup were executed within the session. These actions would later be traced in Splunk.
 
-We disbaled Defender for this.
+3. Victim System Observation
 
-Once on the victim downloads the payload and executes it we got a shell.
+On the Windows host, the following was observed:
 
+Netstat (netstat -anob) revealed an active connection from the Kali attacker on port 4444.
 
-<img width="1080" height="848" alt="Screen Shot 2025-08-29 at 2 02 48 PM" src="https://github.com/user-attachments/assets/bad57630-606b-4831-9572-b78c581eda2c" />
+<img width="1139" height="559" alt="Netstat Connection" src="https://github.com/user-attachments/assets/54e07abf-3133-44a4-89b0-af9a43e54053" />
 
-<img width="646" height="597" alt="Screen Shot 2025-08-29 at 2 02 59 PM" src="https://github.com/user-attachments/assets/60d7be8a-f038-41ae-a7ff-a49b5f246459" />
+The associated Process ID (PID 6648) was traced in Task Manager and linked to Invoice.pdf.exe.
 
+<img width="1066" height="541" alt="Task Manager Process" src="https://github.com/user-attachments/assets/18728f15-6f9f-4259-9a5b-1caec880de4b" />
 
-And we are going to run some commmands in our shell like "net user" "net localgroup" "ipconfig"
+This validated that the malicious executable had successfully established persistence on the victim.
 
-Just to look for in splunk later.
+4. Splunk Telemetry & IOC Investigation
 
-# Now switching to Windows
+Windows Sysmon logs were ingested into Splunk via a custom endpoint index.
 
+Key Findings:
 
-Now we can run netstat -anob and look at all the connections established on our Windows machine and we find our Kali box connected on the port we set 4444
+Searching for the attacker IP revealed execution of Invoice.pdf.exe.
 
+<img width="1024" height="768" alt="Splunk IP Search" src="https://github.com/user-attachments/assets/1d06219d-4b1e-49c6-852a-fea599da6c1b" />
 
-<img width="1139" height="559" alt="Screen Shot 2025-08-29 at 2 22 01 PM" src="https://github.com/user-attachments/assets/54e07abf-3133-44a4-89b0-af9a43e54053" />
+Searching specifically for Invoice.pdf.exe confirmed suspicious execution.
 
-We can also see the Proceess ID which now we can look at that in Task Manager and see what process is running.
+<img width="1024" height="768" alt="Splunk File Search" src="https://github.com/user-attachments/assets/6d1b4a17-c322-4626-a71e-deb0d4f4afbb" />
 
-We look up 6648 and we see it is our "Invoice.pdf.exe".
+Sysmon revealed that Invoice.pdf.exe spawned cmd.exe — a strong indicator of malicious behavior.
 
-<img width="1066" height="541" alt="Screen Shot 2025-08-29 at 2 23 21 PM" src="https://github.com/user-attachments/assets/18728f15-6f9f-4259-9a5b-1caec880de4b" />
+<img width="1024" height="768" alt="Splunk CMD Spawn" src="https://github.com/user-attachments/assets/56d764be-72e3-4ac0-803c-9c8bb199a19c" />
 
-We are not going to Kill it yet.
+By pivoting on the Process GUID, we reconstructed the full process chain and attacker commands with:
 
-Now onto Splunk:
+| table _time, ParentImage, Image, CommandLine
 
+<img width="1024" height="768" alt="Splunk Process GUID" src="https://github.com/user-attachments/assets/9a9389fa-b083-417f-9056-19a6bca12478" /> <img width="1024" height="768" alt="Splunk Command History" src="https://github.com/user-attachments/assets/edac3b64-abe1-4a5c-9aca-e38c712addb7" />
 
-# Splunk
+This confirmed the commands executed from the Meterpreter shell, validating that Splunk successfully captured attacker behavior.
 
+5. Conclusion
 
-In splunk we have our Sysmon add on and we can look at what happened while the the connection to out Kali box was established.
+This exercise demonstrated the full attack lifecycle and the defensive visibility achieved through Splunk + Sysmon:
 
-We will search for our IP in the the index we created "endpoint"
+Telemetry Creation: Attacker actions generated detectable artifacts.
 
-<img width="1024" height="768" alt="IP" src="https://github.com/user-attachments/assets/1d06219d-4b1e-49c6-852a-fea599da6c1b" />
+IOC Identification: Suspicious process execution (Invoice.pdf.exe spawning cmd.exe) was flagged.
 
-And instantly we see our Index.pdf.exe
+Attack Tracing: Process lineage and command history were reconstructed via Splunk queries.
 
-Lets search for our Invoice.pdf.exe now.
+Defensive Application: Analysts can use these techniques to recognize, investigate, and respond to real-world intrusions.
 
-<img width="1024" height="768" alt="invoicre" src="https://github.com/user-attachments/assets/6d1b4a17-c322-4626-a71e-deb0d4f4afbb" />
-
-<img width="1024" height="768" alt="CMD" src="https://github.com/user-attachments/assets/56d764be-72e3-4ac0-803c-9c8bb199a19c" />
-
-We can see that Invoice.pdf.exe spawn cmd.exe, well that is suspcious...
-
-
-Lets expand and find the process GUID and serch for that
-
-<img width="1024" height="768" alt="guid" src="https://github.com/user-attachments/assets/9a9389fa-b083-417f-9056-19a6bca12478" />
-
-
-We searched for our process_guid and we cna filter it and create a table.
-
-|table _timne,ParentImage,Image,CommandLine
-
-
-<img width="1024" height="768" alt="Screen CMDline" src="https://github.com/user-attachments/assets/edac3b64-abe1-4a5c-9aca-e38c712addb7" />
-
-Now we can see the telemtery that we created we can see all the commands that were ran by us in the Kali after the Invoice.pdf.exe was executed and we had access to the command line.
-
-
-The purpose of this lab was to show telemetery and being able to recognize the signs of intrusion and how to identify IOCs as well as investigate the steps take by the attackers in hour system with tools liek splunk and being able to identify malicous processes and repsond to the incident, break the chiain and erradicate malicous processes.
-
-
-
-
-
-
+This lab highlights how defenders can not only identify malicious activity but also map attacker behavior to the intrusion kill chain — enabling effective detection and incident response.
